@@ -85,6 +85,10 @@ def create_app():
         allow_headers=["*"],
     )
 
+    @app.get("/")
+    def root():
+        return {"message": "Berhasil akses model"}
+
     @app.post("/api/predict")
     async def predict(request: Request, file: UploadFile = File(...)):
         contents = await file.read()
