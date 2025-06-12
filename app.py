@@ -1,22 +1,25 @@
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
-os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
-os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
+import uuid
+import uvicorn
+from io import BytesIO
 
-import tensorflow as tf
-tf.config.set_visible_devices([], 'GPU')
-
-import gradio as gr
 import numpy as np
+from PIL import Image
+import tensorflow as tf
 from tensorflow.keras.preprocessing import image
 from tensorflow.keras.models import model_from_json
-from PIL import Image
 
-from huggingface_hub import hf_hub_download
+import gradio as gr
+from fastapi import FastAPI, File, UploadFile, Request
+from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 
 from description import description
 from location import location
+
+
+UPLOAD_FOLDER = "static/uploads"
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 def load_model_from_file(json_path, h5_path):
     with open(json_path, "r") as f:
@@ -25,11 +28,7 @@ def load_model_from_file(json_path, h5_path):
     model.load_weights(h5_path)
     return model
 
-# Load model langsung dari Hugging Face Hub
-model_json_path = hf_hub_download(repo_id="CapstoneML/Model", filename="model.json")
-model_weights_path = hf_hub_download(repo_id="CapstoneML/Model", filename="my_model.h5")
-
-model = load_model_from_file(model_json_path, model_weights_path)
+model = load_model_from_file("model.json", "my_model.h5")
 
 labels = [
     "Benteng Vredeburg", "Candi Borobudur", "Candi Prambanan", "Gedung Agung Istana Kepresidenan",
@@ -72,18 +71,59 @@ def classify_image(img):
         return label_output, deskripsi, lokasi, akurasi
 
     except Exception as e:
-        return "Error", str(e), "-"
+        return "Error", str(e), "-",0.0
+    
+app = FastAPI()
+    
+def create_app():
+    app = FastAPI()
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
-interface = gr.Interface(
-    fn=classify_image,
-    inputs=gr.Image(type="pil", label="Upload Gambar"),
-    outputs=[
-        gr.Textbox(label="Output Klasifikasi"),
-        gr.Textbox(label="Deskripsi Lengkap", lines=20, max_lines=50),
-        gr.HTML(label="Link Lokasi"),
-    ],
-    title="Klasifikasi Gambar",
-    description="Upload gambar, sistem akan mengklasifikasikan dan memberikan deskripsi mengenai gambar tersebut."
-)
+    @app.post("/api/predict")
+    async def predict(request: Request, file: UploadFile = File(...)):
+        contents = await file.read()
+        img = Image.open(BytesIO(contents)).convert("RGB")
 
-interface.launch()
+        # Simpan gambar untuk referensi
+        ext = file.filename.split('.')[-1]
+        filename = f"{uuid.uuid4()}.{ext}"
+        save_path = os.path.join(UPLOAD_FOLDER, filename)
+        img.save(save_path)
+
+        # Buat URL publik untuk gambar
+        base_url = str(request.base_url).rstrip("/")
+        image_url = f"{base_url}/static/uploads/{filename}"
+
+        label_output, deskripsi, lokasi, confidence = classify_image(img)
+
+        return JSONResponse(content={
+            "label_output": label_output,
+            "deskripsi": deskripsi,
+            "lokasi": lokasi,
+            "confidence": confidence,
+            "image_url": image_url
+        })
+
+gradio_app = gr.Interface(
+        fn=classify_image,
+        inputs=gr.Image(type="pil", label="Upload Gambar"),
+        outputs=[
+            gr.Textbox(label="Output Klasifikasi"),
+            gr.Textbox(label="Deskripsi Lengkap", lines=20, max_lines=50),
+            gr.HTML(label="Link Lokasi"),
+        ],
+        title="Klasifikasi Tempat Bersejarah di Yogyakarta",
+        description="Upload gambar objek bersejarah, dan sistem akan mengklasifikasikan serta memberikan deskripsi dan lokasi."
+    )
+
+app = gr.mount_gradio_app(app, gradio_app, path="/gradio")
+
+# ===== Jalankan Server =====
+if __name__ == "__main__":
+    uvicorn.run(app, host="127.0.0.1", port=8000)
