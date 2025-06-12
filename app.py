@@ -13,6 +13,8 @@ from tensorflow.keras.preprocessing import image
 from tensorflow.keras.models import model_from_json
 from PIL import Image
 
+from huggingface_hub import hf_hub_download
+
 from description import description
 from location import location
 
@@ -23,7 +25,11 @@ def load_model_from_file(json_path, h5_path):
     model.load_weights(h5_path)
     return model
 
-model = load_model_from_file("model.json", "my_model.h5")
+# Load model langsung dari Hugging Face Hub
+model_json_path = hf_hub_download(repo_id="CapstoneML/Model", filename="model.json")
+model_weights_path = hf_hub_download(repo_id="CapstoneML/Model", filename="my_model.h5")
+
+model = load_model_from_file(model_json_path, model_weights_path)
 
 labels = [
     "Benteng Vredeburg", "Candi Borobudur", "Candi Prambanan", "Gedung Agung Istana Kepresidenan",
